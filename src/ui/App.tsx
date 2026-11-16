@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Quality } from '../engine/quality';
 import { GameScreen } from './GameScreen';
 import { Menu } from './Menu';
+import { SiteLayout } from './SiteLayout';
 import { loadBests, loadQuality, saveQuality } from './storage';
 
 export function App() {
@@ -14,16 +15,19 @@ export function App() {
     saveQuality(q);
   };
 
-  if (screen === 'game') {
-    return (
-      <GameScreen
-        quality={quality}
-        onExit={() => {
-          setBests(loadBests());
-          setScreen('menu');
-        }}
-      />
-    );
-  }
-  return <Menu quality={quality} onQuality={changeQuality} onPlay={() => setScreen('game')} bests={bests} />;
+  return (
+    <SiteLayout>
+      {screen === 'game' ? (
+        <GameScreen
+          quality={quality}
+          onExit={() => {
+            setBests(loadBests());
+            setScreen('menu');
+          }}
+        />
+      ) : (
+        <Menu quality={quality} onQuality={changeQuality} onPlay={() => setScreen('game')} bests={bests} />
+      )}
+    </SiteLayout>
+  );
 }
