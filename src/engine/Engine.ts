@@ -183,7 +183,7 @@ export class Engine {
           dist: s.dist,
           score: s.score,
           time: s.time,
-          progress: Math.min(1, s.dist / this.level.length),
+          progress: this.level.endless ? (s.dist % 1000) / 1000 : Math.min(1, s.dist / this.level.length),
         });
       }
       return;
@@ -195,6 +195,9 @@ export class Engine {
     }
     this.acc += dt;
     while (this.acc >= DT && s.status === 'running') {
+      if (this.level.endless && this.level.ensureUpTo) {
+        this.level.ensureUpTo(s.dist + 500);
+      }
       this.prev.x = this.cur.x;
       this.prev.y = this.cur.y;
       this.prev.dist = this.cur.dist;
@@ -229,8 +232,8 @@ export class Engine {
       time: s.time,
       energy: s.energy,
       dashReady: s.energy >= DASH_COST && s.dashCd <= 0,
-      progress: Math.min(1, s.dist / this.level.length),
-      length: this.level.length,
+      progress: this.level.endless ? (s.dist % 1000) / 1000 : Math.min(1, s.dist / this.level.length),
+      length: this.level.endless ? 1000 : this.level.length,
       countdown: Math.max(0, this.countdown),
     });
   }
@@ -251,7 +254,7 @@ export class Engine {
       speed: s.speed,
       time: this.last / 1000,
     });
-    this.world.update(time);
+    this.world.update(time, dist);
 
     // Third-person chase camera
     const dashing = s.dashT > 0;
