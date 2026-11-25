@@ -150,4 +150,57 @@ export function generateLevel(seed = 1337, length = 800, name = 'Neon City — R
   return { id: `level-${seed}`, name, length, seed, obstacles: out.map((o, i) => ({ ...o, id: i })) };
 }
 
-export const LEVEL_1 = (): LevelDef => generateLevel();
+/** Deterministic endless level generator. Procedurally generates obstacles on demand. */
+export function createEndlessLevel(seed = 1337, name = 'Neon City — Endless Marathon'): LevelDef {
+  const rng = mulberry32(seed);
+  const obstacles: Obstacle[] = [];
+  const intro = [jumpBlock, tallSideWall, slideBeam, boostPad];
+  let z = 70;
+  let n = 0;
+
+  const ensureUpTo = (targetZ: number): void => {
+    while (obstacles.length === 0 || obstacles[obstacles.length - 1]!.z < targetZ) {
+      const p = Math.min(1, z / 1200);
+      const out: Draft[] = [];
+      const c: Ctx = { rng, p, out };
+      let used: number;
+      if (n < intro.length) {
+        used = intro[n]!(c, z);
+      } else {
+        const avail = POOL.filter((e) => e.from <= p);
+        const total = avail.reduce((a, e) => a + e.weight, 0);
+        let r = rng() * total;
+        let pick = avail[0]!;
+        for (const e of avail) {
+          r -= e.weight;
+          if (r <= 0) {
+            pick = e;
+            break;
+          }
+        }
+        used = pick.fn(c, z);
+      }
+      out.sort((a, b) => a.z - b.z);
+      for (const d of out) {
+        obstacles.push({ ...d, id: obstacles.length });
+      }
+      z += used + Math.max(18, 36 - 16 * p);
+      n++;
+    }
+  };
+
+  // Pre-generate initial runway of obstacles
+  ensureUpTo(800);
+
+  return {
+    id: `endless-${seed}`,
+    name,
+    length: Infinity,
+    seed,
+    obstacles,
+    endless: true,
+    ensureUpTo,
+  };
+}
+
+export const LEVEL_1 = (): LevelDef => createEndlessLevel();

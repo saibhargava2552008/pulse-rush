@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DT, DASH_COST, ENERGY_MAX, TRACK_HALF_WIDTH } from './constants';
-import { generateLevel } from './level';
+import { createEndlessLevel, generateLevel } from './level';
 import { createState, step } from './sim';
 import { obstacleX } from './types';
 import type { InputState, LevelDef, Obstacle, ObstacleKind, SimState } from './types';
@@ -173,5 +173,59 @@ describe('level generator', () => {
   it('uses every obstacle type', () => {
     const kinds = new Set(generateLevel().obstacles.map((o) => o.kind));
     for (const k of ['block', 'beam', 'wall', 'gap', 'boost', 'sweeper'] as const) expect(kinds.has(k)).toBe(true);
+  });
+});
+
+describe('endless marathon mode', () => {
+  it('creates endless level with endless flag and ensureUpTo generator', () => {
+    const l = createEndlessLevel(42, 'Neon City Endless');
+    expect(l.endless).toBe(true);
+    expect(typeof l.ensureUpTo).toBe('function');
+    expect(l.obstacles.length).toBeGreaterThan(10);
+    // Initial buffer reaches at least 600m
+    const maxZ = Math.max(...l.obstacles.map((o) => o.z));
+    expect(maxZ).toBeGreaterThanOrEqual(600);
+  });
+
+  it('generates obstacles beyond 800m without gap cutoff', () => {
+    const l = createEndlessLevel(42);
+    l.ensureUpTo?.(1500);
+    const obstaclesPast800 = l.obstacles.filter((o) => o.z > 800);
+    expect(obstaclesPast800.length).toBeGreaterThan(15);
+    const obstaclesBetween740And800 = l.obstacles.filter((o) => o.z >= 740 && o.z <= 800);
+    expect(obstaclesBetween740And800.length).toBeGreaterThan(0);
+    const maxZ = Math.max(...l.obstacles.map((o) => o.z));
+    expect(maxZ).toBeGreaterThanOrEqual(1500);
+  });
+
+  it('does not finish at 800m and runs continuously', () => {
+    // Endless level with no obstacles to verify continuous running beyond 800m
+    const l: LevelDef = { id: 'endless-test', name: 'Test', length: 800, seed: 1, obstacles: [], endless: true };
+    const s = createState();
+    // 850m at 25-30m/s takes ~35 seconds
+    run(s, l, () => ({}), (st) => st.dist >= 850, 45);
+    expect(s.dist).toBeGreaterThanOrEqual(850);
+    expect(s.status).toBe('running');
+  });
+
+  it('ends only when player crashes or falls in endless mode', () => {
+    const l = createEndlessLevel(42);
+    const s = createState();
+    // Run straight without steering/jumping until hitting an obstacle or falling
+    run(s, l, () => ({}), () => false, 60);
+    expect(s.status).toBe('crashed');
+    expect(['obstacle', 'fell']).toContain(s.crash);
+  });
+
+  it('endless obstacle stream is deterministic for same seed', () => {
+    const a = createEndlessLevel(9999);
+    const b = createEndlessLevel(9999);
+    a.ensureUpTo?.(2000);
+    b.ensureUpTo?.(2000);
+    expect(a.obstacles.length).toBe(b.obstacles.length);
+    for (let i = 0; i < a.obstacles.length; i++) {
+      expect(a.obstacles[i]!.z).toBeCloseTo(b.obstacles[i]!.z, 5);
+      expect(a.obstacles[i]!.kind).toBe(b.obstacles[i]!.kind);
+    }
   });
 });

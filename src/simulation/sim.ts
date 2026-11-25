@@ -124,7 +124,8 @@ export function step(s: SimState, input: InputState, level: LevelDef, dt: number
   // Obstacles
   const h = playerHeight(s);
   const obs = level.obstacles;
-  for (let i = 0; i < obs.length; i++) {
+  const startIdx = Math.max(0, s.nextObstacle - 2);
+  for (let i = startIdx; i < obs.length; i++) {
     const o = obs[i]!;
     if (o.z - o.depth > s.dist + PLAYER_HALF_DEPTH + 1) break;
     if (o.kind === 'gap') continue;
@@ -153,5 +154,5 @@ export function step(s: SimState, input: InputState, level: LevelDef, dt: number
   }
   s.score = Math.floor(s.dist * SCORE_PER_METER) + s.cleared * SCORE_PER_CLEAR;
 
-  if (s.dist >= level.length) s.status = 'finished';
+  if (!level.endless && s.dist >= level.length) s.status = 'finished';
 }

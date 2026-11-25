@@ -1,5 +1,6 @@
 import type { Quality } from '../engine/quality';
 import type { Bests } from './storage';
+import { Link } from './router';
 
 interface Props {
   quality: Quality;
@@ -14,7 +15,12 @@ const QUALITIES: { id: Quality; label: string }[] = [
   { id: 'high', label: 'High' },
 ];
 
-const SOON = ['Time Trial', 'Survival', 'Multiplayer with friends', 'Level select', 'Character customization', 'Profile'];
+const HIGHLIGHTS = [
+  'Endless Track · Procedural Neon City scaling up to 30 m/s',
+  'Pulse Phasing · Dash through laser hazards with timed energy',
+  'Dynamic Obstacles · Dodge blocks, sweepers, and jump track gaps',
+  'Local Records · Best distance, time, and high scores saved on device',
+];
 
 const fmt = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
 
@@ -29,7 +35,10 @@ export function Menu({ quality, onQuality, onPlay, bests }: Props) {
             <span className="logo-b">Rush</span>
           </h1>
           <p className="tagline">Race the neon grid. Dash through lasers.</p>
-          <button className="btn big" onClick={onPlay}>Play Level 1 · Neon City</button>
+          <div className="menu-hero-actions">
+            <button className="btn big" onClick={onPlay}>Play Endless · Neon City</button>
+            <Link to="/guide" className="btn ghost menu-guide-btn">Game Guide & Controls</Link>
+          </div>
           {(bests.bestTime !== null || bests.bestDist > 0) && (
             <p className="bests">
               Best distance {Math.floor(bests.bestDist)} m
@@ -57,11 +66,23 @@ export function Menu({ quality, onQuality, onPlay, bests }: Props) {
             <p className="note">Touch: drag the left side to steer, tap Jump, Slide and Dash on the right.</p>
           </div>
 
-          <div className="panel soon-panel">
-            <h2>Coming later</h2>
-            <ul>
-              {SOON.map((s) => (
-                <li key={s}>{s}</li>
+          <div className="panel menu-links-panel">
+            <h2>Website Navigation</h2>
+            <nav className="menu-nav-links" aria-label="Quick Links">
+              <Link to="/guide" className="menu-nav-link">Gameplay Guide</Link>
+              <Link to="/strategy" className="menu-nav-link">Strategy Guide</Link>
+              <Link to="/about" className="menu-nav-link">About Project</Link>
+              <Link to="/contact" className="menu-nav-link">Contact & Support</Link>
+              <Link to="/privacy" className="menu-nav-link">Privacy Policy</Link>
+              <Link to="/terms" className="menu-nav-link">Terms of Service</Link>
+            </nav>
+          </div>
+
+          <div className="panel game-highlights-panel">
+            <h2>Gameplay Highlights</h2>
+            <ul className="highlights-list">
+              {HIGHLIGHTS.map((h) => (
+                <li key={h}>{h}</li>
               ))}
             </ul>
           </div>

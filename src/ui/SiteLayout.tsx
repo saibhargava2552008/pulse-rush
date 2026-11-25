@@ -1,39 +1,26 @@
-import { useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
-import { AdSlot } from './AdSlot';
+import { Header } from './components/Header';
+import { Footer } from './components/Footer';
 
-/**
- * The ad sidebar only exists on wide screens with a mouse-style pointer. Touch devices
- * (phones and tablets) keep the whole screen for the game and its on-screen controls.
- * This is the single source of truth for the breakpoint: below it the sidebar is not
- * rendered at all, rather than being hidden with CSS, so nothing loads into a hidden slot.
- */
-export const DESKTOP_AD_QUERY = '(min-width: 1100px) and (hover: hover) and (pointer: fine)';
-
-function subscribe(onChange: () => void): () => void {
-  const mq = window.matchMedia(DESKTOP_AD_QUERY);
-  mq.addEventListener('change', onChange);
-  return () => mq.removeEventListener('change', onChange);
+interface Props {
+  children: ReactNode;
+  isGameMode?: boolean;
 }
 
-const getSnapshot = (): boolean => window.matchMedia(DESKTOP_AD_QUERY).matches;
-
 /**
- * Page shell around the whole app. The game (or menu) fills the main area; on desktop a
- * fixed-width column to its right holds the ad slot. The two are siblings in a flex row, so
- * the slot can never overlap the game canvas, HUD, overlays or touch controls.
+ * Page shell around the whole app. On game mode, the canvas/HUD fills the main area.
+ * On portal mode, header, scrollable content and footer are rendered cleanly across the full viewport.
  */
-export function SiteLayout({ children }: { children: ReactNode }) {
-  const showAds = useSyncExternalStore(subscribe, getSnapshot);
-
+export function SiteLayout({ children, isGameMode = false }: Props) {
   return (
-    <div className={showAds ? 'site site--ads' : 'site'}>
-      <div className="site-main">{children}</div>
-      {showAds && (
-        <div className="site-ads">
-          <AdSlot placement="desktop-sidebar" />
+    <div className="site">
+      <div className={`site-main ${isGameMode ? 'site-main--game' : 'site-main--portal'}`}>
+        {!isGameMode && <Header />}
+        <div className={`site-content ${isGameMode ? 'site-content--game' : 'site-content--portal'}`}>
+          {children}
+          {!isGameMode && <Footer />}
         </div>
-      )}
+      </div>
     </div>
   );
 }

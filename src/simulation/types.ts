@@ -27,6 +27,8 @@ export interface LevelDef {
   length: number;
   seed: number;
   obstacles: Obstacle[];
+  endless?: boolean;
+  ensureUpTo?: (dist: number) => void;
 }
 
 /** Normalised input, fed by keyboard and touch alike. */

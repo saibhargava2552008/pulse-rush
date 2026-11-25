@@ -6,6 +6,8 @@ import type { LevelDef, Obstacle } from '../simulation/types';
 import type { QualityProfile } from './quality';
 
 const TILE = 4;
+const TILE_COUNT = 80; // 320 m active floor buffer
+const SPAN_CITY = 320; // 320 m continuous skyline cycle
 const CYAN = 0x2bf0ff;
 const HOT = 0xff6a1a;
 
@@ -23,9 +25,17 @@ function canvasTex(w: number, h: number, draw: (g: CanvasRenderingContext2D) => 
 
 export interface World {
   group: THREE.Group;
-  /** Moves animated obstacles to their position at sim time `t`. */
-  update(t: number): void;
+  /** Moves animated obstacles to their position at sim time `t`, and updates streaming world relative to player distance. */
+  update(t: number, curDist?: number): void;
   dispose(): void;
+}
+
+interface BuildingInfo {
+  x: number;
+  w: number;
+  h: number;
+  d: number;
+  relZ: number;
 }
 
 export function buildWorld(scene: THREE.Scene, level: LevelDef, q: QualityProfile): World {
@@ -33,7 +43,10 @@ export function buildWorld(scene: THREE.Scene, level: LevelDef, q: QualityProfil
   const disposables: { dispose(): void }[] = [];
   const track = <T extends { dispose(): void }>(d: T): T => (disposables.push(d), d);
   const movers: { obj: THREE.Object3D; o: Obstacle }[] = [];
+  const activeMeshes = new Map<number, THREE.Group>();
   const rng = mulberry32(level.seed ^ 0x9e3779b9);
+  const m4 = new THREE.Matrix4();
+  const qIdent = new THREE.Quaternion();
 
   // ---- sky + fog ----
   const sky = track(
@@ -68,14 +81,7 @@ export function buildWorld(scene: THREE.Scene, level: LevelDef, q: QualityProfil
     parent.add(m);
   };
 
-  // ---- floor tiles (instanced), rails, gap markers ----
-  const gaps = level.obstacles.filter((o) => o.kind === 'gap');
-  const inGap = (c: number): boolean => gaps.some((g) => Math.abs(c - g.z) < g.depth);
-  const firstTile = -4;
-  const lastTile = Math.ceil((level.length + 40) / TILE);
-  const tiles: number[] = [];
-  for (let i = firstTile; i < lastTile; i++) if (!inGap(i * TILE + TILE / 2)) tiles.push(i);
-
+  // ---- floor tiles & rails (ring buffer instanced) ----
   const gridTex = track(
     canvasTex(256, 160, (g) => {
       g.fillStyle = '#0a0e2c';
@@ -106,25 +112,14 @@ export function buildWorld(scene: THREE.Scene, level: LevelDef, q: QualityProfil
     }),
   );
   const tileGeo = track(new THREE.BoxGeometry(HALF * 2, 0.4, TILE - 0.04));
-  const floor = new THREE.InstancedMesh(tileGeo, floorMat, tiles.length);
+  const floor = new THREE.InstancedMesh(tileGeo, floorMat, TILE_COUNT);
   const railGeo = track(new THREE.BoxGeometry(0.2, 0.3, TILE - 0.04));
-  const rails = new THREE.InstancedMesh(railGeo, cyanBasic, tiles.length * 2);
-  const m4 = new THREE.Matrix4();
-  tiles.forEach((i, n) => {
-    const z = -(i * TILE + TILE / 2);
-    floor.setMatrixAt(n, m4.makeTranslation(0, -0.2, z));
-    rails.setMatrixAt(n * 2, m4.makeTranslation(-(HALF + 0.1), 0.05, z));
-    rails.setMatrixAt(n * 2 + 1, m4.makeTranslation(HALF + 0.1, 0.05, z));
-  });
+  const rails = new THREE.InstancedMesh(railGeo, cyanBasic, TILE_COUNT * 2);
   floor.frustumCulled = false;
   rails.frustumCulled = false;
   group.add(floor, rails);
 
-  for (const g of gaps) {
-    for (const edge of [g.z - g.depth, g.z + g.depth]) part(group, hot, HALF * 2, 0.04, 0.22, 0, 0.03, -edge);
-  }
-
-  // ---- skyline (instanced, tinted) ----
+  // ---- skyline (instanced, wrapped along continuous cycle) ----
   const winTex = track(
     canvasTex(64, 128, (g) => {
       g.fillStyle = '#0b0820';
@@ -143,24 +138,24 @@ export function buildWorld(scene: THREE.Scene, level: LevelDef, q: QualityProfil
   const city = new THREE.InstancedMesh(box, cityMat, q.skyline);
   const tints = [0x2bf0ff, 0x2f6bff, 0x8b4dff, 0x8b4dff, 0x2f6bff, 0xff7a1a].map((c) => new THREE.Color(c));
   const col = new THREE.Color();
+  const buildings: BuildingInfo[] = [];
+
   for (let n = 0; n < q.skyline; n++) {
     const side = n % 2 === 0 ? -1 : 1;
     const w = 6 + rng() * 10;
     const d = 6 + rng() * 10;
     const h = 25 + rng() * 75;
     const x = side * (14 + rng() * 55);
-    const z = -(30 + (n / q.skyline) * (level.length + 160) + rng() * 8);
-    m4.compose(new THREE.Vector3(x, h / 2 - 60, z), new THREE.Quaternion(), new THREE.Vector3(w, h, d));
-    city.setMatrixAt(n, m4);
+    const relZ = 30 + (n / q.skyline) * SPAN_CITY + rng() * 8;
+    buildings.push({ x, w, h, d, relZ });
     col.copy(tints[Math.floor(rng() * tints.length)]!).multiplyScalar(0.55 + rng() * 0.45);
     city.setColorAt(n, col);
   }
-  city.instanceMatrix.needsUpdate = true;
   if (city.instanceColor) city.instanceColor.needsUpdate = true;
   city.frustumCulled = false;
   group.add(city);
 
-  // ---- obstacles ----
+  // ---- obstacles builder resources ----
   const chevron = track(
     canvasTex(64, 128, (g) => {
       g.clearRect(0, 0, 64, 128);
@@ -189,7 +184,7 @@ export function buildWorld(scene: THREE.Scene, level: LevelDef, q: QualityProfil
     part(g, posts, 0.22, o.y1, 0.28, o.halfW, o.y1 / 2);
   };
 
-  for (const o of level.obstacles) {
+  const buildObstacleMesh = (o: Obstacle): THREE.Group => {
     const g = new THREE.Group();
     g.position.set(o.kind === 'sweeper' ? 0 : o.x, 0, -o.z);
     switch (o.kind) {
@@ -205,7 +200,6 @@ export function buildWorld(scene: THREE.Scene, level: LevelDef, q: QualityProfil
         break;
       case 'sweeper':
         laser(g, o, hot);
-        movers.push({ obj: g, o });
         break;
       case 'boost': {
         const base = new THREE.Mesh(planeGeo, padBase);
@@ -219,31 +213,36 @@ export function buildWorld(scene: THREE.Scene, level: LevelDef, q: QualityProfil
         g.add(base, arrows);
         break;
       }
-      case 'gap':
-        g.position.set(0, 0, 0);
+      case 'gap': {
+        // Glowing orange edge markers at gap boundaries
+        part(g, hot, HALF * 2, 0.04, 0.22, 0, 0.03, o.depth);
+        part(g, hot, HALF * 2, 0.04, 0.22, 0, 0.03, -o.depth);
         break;
-    }
-    group.add(g);
-  }
-
-  // ---- finish arch ----
-  const fin = new THREE.Group();
-  fin.position.z = -level.length;
-  part(fin, cyanBasic, 0.4, 5.5, 0.4, -(HALF + 0.4), 2.75);
-  part(fin, cyanBasic, 0.4, 5.5, 0.4, HALF + 0.4, 2.75);
-  part(fin, cyanBasic, HALF * 2 + 1.2, 0.5, 0.5, 0, 5.5);
-  part(fin, curtain, HALF * 2, 5, 0.05, 0, 2.5);
-  const checker = track(
-    canvasTex(128, 16, (g) => {
-      for (let x = 0; x < 16; x++) for (let y = 0; y < 2; y++) {
-        g.fillStyle = (x + y) % 2 ? '#ffffff' : '#101030';
-        g.fillRect(x * 8, y * 8, 8, 8);
       }
-    }),
-  );
-  const checkerMat = track(new THREE.MeshBasicMaterial({ map: checker }));
-  part(fin, checkerMat, HALF * 2, 0.03, 1, 0, 0.02);
-  group.add(fin);
+    }
+    return g;
+  };
+
+  // Optional finish arch for finite levels only
+  if (!level.endless && isFinite(level.length)) {
+    const fin = new THREE.Group();
+    fin.position.z = -level.length;
+    part(fin, cyanBasic, 0.4, 5.5, 0.4, -(HALF + 0.4), 2.75);
+    part(fin, cyanBasic, 0.4, 5.5, 0.4, HALF + 0.4, 2.75);
+    part(fin, cyanBasic, HALF * 2 + 1.2, 0.5, 0.5, 0, 5.5);
+    part(fin, curtain, HALF * 2, 5, 0.05, 0, 2.5);
+    const checker = track(
+      canvasTex(128, 16, (g) => {
+        for (let x = 0; x < 16; x++) for (let y = 0; y < 2; y++) {
+          g.fillStyle = (x + y) % 2 ? '#ffffff' : '#101030';
+          g.fillRect(x * 8, y * 8, 8, 8);
+        }
+      }),
+    );
+    const checkerMat = track(new THREE.MeshBasicMaterial({ map: checker }));
+    part(fin, checkerMat, HALF * 2, 0.03, 1, 0, 0.02);
+    group.add(fin);
+  }
 
   // ---- lights ----
   const hemi = new THREE.HemisphereLight(0x8fb6ff, 0x1a0b3a, 0.95);
@@ -255,14 +254,84 @@ export function buildWorld(scene: THREE.Scene, level: LevelDef, q: QualityProfil
 
   return {
     group,
-    update(t: number): void {
-      for (const m of movers) m.obj.position.x = obstacleX(m.o, t);
+    update(t: number, curDist = 0): void {
+      // 1. Dynamic floor and rails ring buffer around curDist
+      const firstTile = Math.floor((curDist - 32) / TILE);
+      for (let n = 0; n < TILE_COUNT; n++) {
+        const tileIdx = firstTile + n;
+        const tileCenterZ = tileIdx * TILE + TILE / 2;
+        let isGap = false;
+        for (let i = 0; i < level.obstacles.length; i++) {
+          const o = level.obstacles[i]!;
+          if (o.kind === 'gap' && Math.abs(tileCenterZ - o.z) < o.depth) {
+            isGap = true;
+            break;
+          }
+          if (o.z - o.depth > tileCenterZ + 8) break;
+        }
+
+        if (isGap) {
+          floor.setMatrixAt(n, m4.makeTranslation(0, -999, 0));
+          rails.setMatrixAt(n * 2, m4.makeTranslation(0, -999, 0));
+          rails.setMatrixAt(n * 2 + 1, m4.makeTranslation(0, -999, 0));
+        } else {
+          const z = -tileCenterZ;
+          floor.setMatrixAt(n, m4.makeTranslation(0, -0.2, z));
+          rails.setMatrixAt(n * 2, m4.makeTranslation(-(HALF + 0.1), 0.05, z));
+          rails.setMatrixAt(n * 2 + 1, m4.makeTranslation(HALF + 0.1, 0.05, z));
+        }
+      }
+      floor.instanceMatrix.needsUpdate = true;
+      rails.instanceMatrix.needsUpdate = true;
+
+      // 2. Continuous skyline cycling
+      for (let n = 0; n < q.skyline; n++) {
+        const b = buildings[n]!;
+        const offset = Math.floor((curDist - b.relZ + 80) / SPAN_CITY) * SPAN_CITY;
+        const z = -(b.relZ + offset);
+        m4.compose(new THREE.Vector3(b.x, b.h / 2 - 60, z), qIdent, new THREE.Vector3(b.w, b.h, b.d));
+        city.setMatrixAt(n, m4);
+      }
+      city.instanceMatrix.needsUpdate = true;
+
+      // 3. Dynamic obstacle streaming within visible window [curDist - 40, curDist + 220]
+      for (let i = 0; i < level.obstacles.length; i++) {
+        const o = level.obstacles[i]!;
+        if (o.z < curDist - 40) continue;
+        if (o.z > curDist + 220) break;
+        if (!activeMeshes.has(o.id)) {
+          const g = buildObstacleMesh(o);
+          group.add(g);
+          activeMeshes.set(o.id, g);
+          if (o.kind === 'sweeper') movers.push({ obj: g, o });
+        }
+      }
+
+      // Despawn passed obstacles outside visible range
+      for (const [id, mesh] of activeMeshes) {
+        const o = level.obstacles[id];
+        if (!o || o.z < curDist - 50 || o.z > curDist + 240) {
+          group.remove(mesh);
+          activeMeshes.delete(id);
+          const mIdx = movers.findIndex((m) => m.o.id === id);
+          if (mIdx !== -1) movers.splice(mIdx, 1);
+        }
+      }
+
+      // 4. Update animated sweeper positions
+      for (let i = 0; i < movers.length; i++) {
+        const m = movers[i]!;
+        m.obj.position.x = obstacleX(m.o, t);
+      }
     },
     dispose(): void {
       scene.remove(group);
       floor.dispose();
       rails.dispose();
       city.dispose();
+      for (const [, mesh] of activeMeshes) group.remove(mesh);
+      activeMeshes.clear();
+      movers.length = 0;
       for (const d of disposables) d.dispose();
       scene.background = null;
       scene.fog = null;
